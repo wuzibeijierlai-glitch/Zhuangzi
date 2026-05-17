@@ -115,6 +115,49 @@ a{color:inherit;text-decoration:none}
 @media(min-width:1100px){
   #main:not(.full){margin-left:calc(240px + (100vw - 240px - 860px) / 2)}
 }
+.duizhao-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  padding: 20px 24px 24px;
+}
+.duizhao-col {
+  line-height: 2;
+}
+.duizhao-left {
+  border-right: 1px solid var(--border);
+  padding-right: 28px;
+  font-family: var(--font-body);
+}
+.duizhao-right {
+  font-family: var(--font-body);
+  color: var(--text2);
+}
+.sent {
+  cursor: pointer;
+  transition: background-color 0.25s ease, border-radius 0.2s;
+  padding: 2px 4px;
+}
+.sent.highlight {
+  background-color: rgba(201, 169, 74, 0.18);
+  border-radius: 4px;
+}
+[data-theme="dark"] .sent.highlight {
+  background-color: rgba(201, 169, 74, 0.28);
+}
+@media(max-width: 768px) {
+  .duizhao-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 16px;
+  }
+  .duizhao-left {
+    border-right: none;
+    border-bottom: 1px dashed var(--border);
+    padding-right: 0;
+    padding-bottom: 16px;
+  }
+}
 </style>
 </head>
 <body>
@@ -2840,6 +2883,7 @@ var chapterEls=[];
 window.addEventListener('DOMContentLoaded',function(){
   chapterEls=Array.from(document.querySelectorAll('.chapter,.section-cover'));
   document.getElementById('font-display').textContent=fontSize+'px';
+  initBilingualMode();
 });
 var scrollTicking=false;
 window.addEventListener('scroll',function(){
@@ -2955,6 +2999,179 @@ document.addEventListener('mousedown',function(e){
   var np=document.getElementById('note-popup');
   if(np&&!np.contains(e.target))np.style.display='none';
 });
+
+function initBilingualMode(){
+  var blocks=document.querySelectorAll('.block');
+  blocks.forEach(function(block){
+    var tabBar=block.querySelector('.tab-bar');
+    if(!tabBar)return;
+    var duiBtn=document.createElement('button');
+    duiBtn.className='tab-btn';
+    var paneId='dui_'+block.id;
+    duiBtn.textContent='对照';
+    duiBtn.addEventListener('click',function(){
+      ensureBilingualPane(block,paneId);
+      switchTab(duiBtn,paneId);
+    });
+    tabBar.appendChild(duiBtn);
+  });
+}
+
+function segmentElement(element){
+  var sentenceIndex=0,currentSpan=null;
+  function traverse(node){
+    if(node.nodeType===Node.TEXT_NODE){
+      var text=node.textContent;
+      var parts=text.split(/([。！？；;\?\!])/g);
+      var parent=node.parentNode;
+      for(var i=0;i<parts.length;i++){
+        var part=parts[i];if(!part)continue;
+        if(!currentSpan){
+          currentSpan=document.createElement('span');
+          currentSpan.className='sent';
+          currentSpan.setAttribute('data-sidx',sentenceIndex);
+          parent.insertBefore(currentSpan,node);
+        }
+        currentSpan.appendChild(document.createTextNode(part));
+        if(/^[。！？；;\?\!]$/.test(part)){sentenceIndex++;currentSpan=null;}
+      }
+      parent.removeChild(node);
+    }else if(node.nodeType===Node.ELEMENT_NODE){
+      if(node.classList.contains('note-mark')){
+        if(!currentSpan){
+          currentSpan=document.createElement('span');
+          currentSpan.className='sent';
+          currentSpan.setAttribute('data-sidx',sentenceIndex);
+          node.parentNode.insertBefore(currentSpan,node);
+        }
+        currentSpan.appendChild(node.cloneNode(true));
+        node.parentNode.removeChild(node);
+      }else if(node.tagName==='BR'){
+        sentenceIndex++;currentSpan=null;
+      }else{
+        Array.from(node.childNodes).forEach(traverse);
+      }
+    }
+  }
+  var temp=element.cloneNode(true);
+  Array.from(temp.childNodes).forEach(traverse);
+  return temp;
+}
+
+function alignSentences(yuanSents,yiSents){
+  var N=yuanSents.length,M=yiSents.length;
+  if(N===0||M===0)return[];
+  var mapping=[];
+  function clean(str){return str.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g,'');}
+  var yuanCleans=Array.from(yuanSents).map(function(s){return clean(s.textContent);});
+  var yiCleans=Array.from(yiSents).map(function(s){return clean(s.textContent);});
+  for(var i=0;i<N;i++){
+    var u=yuanCleans[i];
+    if(!u){mapping.push(Math.min(M-1,Math.round(i*(M/N))));continue;}
+    var bestJ=0,maxScore=-1;
+    for(var j=0;j<M;j++){
+      var v=yiCleans[j];if(!v)continue;
+      var score=0;
+      if(v.indexOf(u)>=0||u.indexOf(v)>=0){score+=100;}
+      else{
+        for(var len=Math.min(8,u.length);len>=3;len--){
+          var matched=false;
+          for(var start=0;start<=u.length-len;start++){
+            var chunk=u.substr(start,len);
+            if(v.indexOf(chunk)>=0){score+=len*10;matched=true;break;}
+          }
+          if(matched)break;
+        }
+      }
+      var overlap=0,uChars={};
+      for(var k=0;k<u.length;k++)uChars[u[k]]=true;
+      for(var k=0;k<v.length;k++){
+        if(uChars[v[k]]){
+          overlap++;
+          if("之乎者也矣而于以其之于吾汝其此彼若".indexOf(v[k])===-1){overlap+=2;}
+        }
+      }
+      score+=overlap;
+      var dist=Math.abs((i/N)-(j/M));
+      var distancePenalty=Math.exp(-dist*dist*8);
+      score=score*distancePenalty;
+      score+=(1-dist)*0.1;
+      if(score>maxScore){maxScore=score;bestJ=j;}
+    }
+    mapping.push(bestJ);
+  }
+  return mapping;
+}
+
+function ensureBilingualPane(block,paneId){
+  if(document.getElementById(paneId))return;
+  var yuanPane=block.querySelector('[id^="yuan_"]');
+  var yiPane=block.querySelector('[id^="yi_"]');
+  if(!yuanPane||!yiPane)return;
+  var yuanwenEl=yuanPane.querySelector('.yuanwen');
+  var yiwenEl=yiPane.querySelector('.yiwen');
+  if(!yuanwenEl||!yiwenEl)return;
+  var segYuanwen=segmentElement(yuanwenEl);
+  var segYiwen=segmentElement(yiwenEl);
+  var duiPane=document.createElement('div');
+  duiPane.className='tab-pane';duiPane.id=paneId;
+  var container=document.createElement('div');
+  container.className='duizhao-layout';
+  var leftCol=document.createElement('div');
+  leftCol.className='duizhao-col duizhao-left';
+  leftCol.appendChild(segYuanwen);
+  var rightCol=document.createElement('div');
+  rightCol.className='duizhao-col duizhao-right';
+  rightCol.appendChild(segYiwen);
+  container.appendChild(leftCol);container.appendChild(rightCol);
+  duiPane.appendChild(container);block.appendChild(duiPane);
+  var yuanSents=Array.from(leftCol.querySelectorAll('.sent'));
+  var yiSents=Array.from(rightCol.querySelectorAll('.sent'));
+  var N=yuanSents.length,M=yiSents.length;
+  var yuanToYiMapping=alignSentences(yuanSents,yiSents);
+  var yiToYuanMapping=[];
+  for(var j=0;j<M;j++)yiToYuanMapping.push([]);
+  for(var i=0;i<N;i++){
+    var j=yuanToYiMapping[i];
+    if(j!==undefined)yiToYuanMapping[j].push(i);
+  }
+  function highlightSentence(sidx,sourceCol){
+    leftCol.querySelectorAll('.sent').forEach(function(s){s.classList.remove('highlight');});
+    rightCol.querySelectorAll('.sent').forEach(function(s){s.classList.remove('highlight');});
+    if(sidx===null)return;
+    if(sourceCol==='left'){
+      var yuanSent=leftCol.querySelector('.sent[data-sidx="'+sidx+'"]');
+      if(yuanSent)yuanSent.classList.add('highlight');
+      var targetIdx=yuanToYiMapping[sidx];
+      if(targetIdx!==undefined){
+        var yiSent=rightCol.querySelector('.sent[data-sidx="'+targetIdx+'"]');
+        if(yiSent)yiSent.classList.add('highlight');
+      }
+    }else{
+      var yiSent=rightCol.querySelector('.sent[data-sidx="'+sidx+'"]');
+      if(yiSent)yiSent.classList.add('highlight');
+      var targetIdxs=yiToYuanMapping[sidx];
+      if(targetIdxs&&targetIdxs.length>0){
+        targetIdxs.forEach(function(ti){
+          var yuanSent=leftCol.querySelector('.sent[data-sidx="'+ti+'"]');
+          if(yuanSent)yuanSent.classList.add('highlight');
+        });
+      }
+    }
+  }
+  yuanSents.forEach(function(sent){
+    var sidx=parseInt(sent.getAttribute('data-sidx'));
+    sent.addEventListener('mouseenter',function(){highlightSentence(sidx,'left');});
+    sent.addEventListener('mouseleave',function(){highlightSentence(null,'left');});
+    sent.addEventListener('touchstart',function(){highlightSentence(sidx,'left');},{passive:true});
+  });
+  yiSents.forEach(function(sent){
+    var sidx=parseInt(sent.getAttribute('data-sidx'));
+    sent.addEventListener('mouseenter',function(){highlightSentence(sidx,'right');});
+    sent.addEventListener('mouseleave',function(){highlightSentence(null,'right');});
+    sent.addEventListener('touchstart',function(){highlightSentence(sidx,'right');},{passive:true});
+  });
+}
 </script>
 </body>
 </html>
