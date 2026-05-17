@@ -58,7 +58,7 @@
 ### 离线双击（推荐）
 1. 下载或克隆本项目：
    ```bash
-   git clone https://github.com/your-username/zhuangzi-reader.git
+   git clone https://github.com/wuzibeijierlai-glitch/-.git
    ```
 2. 直接双击 `庄子全书·无障碍版.html`，即可在您的默认浏览器中开启极致的阅读之旅。
 
