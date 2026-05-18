@@ -3076,47 +3076,57 @@ function segmentElement(element){
 }
 
 function alignSentences(yuanSents,yiSents){
+  // DP Monotone Alignment + IDF-weighted similarity.
+  // 原文与今译按相同顺序对应，正确匹配一定是单调的。
+  // 此 DP 全局最优地找到满足单调性的分配，并允许多个原文句子共对一个今译句子。
   var N=yuanSents.length,M=yiSents.length;
   if(N===0||M===0)return[];
-  var mapping=[];
-  function clean(str){return str.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g,'');}
+  function clean(str){return str.replace(/[^\u4e00-\u9fa5]/g,'');}
   var yuanCleans=Array.from(yuanSents).map(function(s){return clean(s.textContent);});
   var yiCleans=Array.from(yiSents).map(function(s){return clean(s.textContent);});
-  for(var i=0;i<N;i++){
-    var u=yuanCleans[i];
-    if(!u){mapping.push(Math.min(M-1,Math.round(i*(M/N))));continue;}
-    var bestJ=0,maxScore=-1;
-    for(var j=0;j<M;j++){
-      var v=yiCleans[j];if(!v)continue;
-      var score=0;
-      if(v.indexOf(u)>=0||u.indexOf(v)>=0){score+=100;}
-      else{
-        for(var len=Math.min(8,u.length);len>=3;len--){
-          var matched=false;
-          for(var start=0;start<=u.length-len;start++){
-            var chunk=u.substr(start,len);
-            if(v.indexOf(chunk)>=0){score+=len*10;matched=true;break;}
-          }
-          if(matched)break;
-        }
-      }
-      var overlap=0,uChars={};
-      for(var k=0;k<u.length;k++)uChars[u[k]]=true;
-      for(var k=0;k<v.length;k++){
-        if(uChars[v[k]]){
-          overlap++;
-          if("之乎者也矣而于以其之于吾汝其此彼若".indexOf(v[k])===-1){overlap+=2;}
-        }
-      }
-      score+=overlap;
-      var dist=Math.abs((i/N)-(j/M));
-      var distancePenalty=Math.exp(-dist*dist*8);
-      score=score*distancePenalty;
-      score+=(1-dist)*0.1;
-      if(score>maxScore){maxScore=score;bestJ=j;}
-    }
-    mapping.push(bestJ);
+  var charFreq={};
+  yuanCleans.concat(yiCleans).forEach(function(s){
+    var seen={};
+    for(var i=0;i<s.length;i++){if(!seen[s[i]]){seen[s[i]]=true;charFreq[s[i]]=(charFreq[s[i]]||0)+1;}}
+  });
+  var D=N+M;
+  var funcWords='\u4e4b\u4e4e\u8005\u4e5f\u77e3\u800c\u4e8e\u4ee5\u5176\u6b64\u5f7c\u82e5\u592b\u66f0\u4e0e\u4e43\u4e3a\u6240\u4e0d\u4ea6\u5219\u6545\u4e14\u5df2\u7109';
+  function wt(c){
+    if(funcWords.indexOf(c)>=0)return 0.05;
+    return 1+Math.log(D/((charFreq[c]||1)));
   }
+  function sim(u,v){
+    if(!u||!v)return 0;
+    var uw={},ut=0;
+    for(var i=0;i<u.length;i++){var c=u[i],w=wt(c);uw[c]=(uw[c]||0)+w;ut+=w;}
+    var ov=0,vt=0;
+    for(var i=0;i<v.length;i++){
+      var c=v[i],w=wt(c);vt+=w;
+      if(uw[c]>0){var t=Math.min(uw[c],w);ov+=t;uw[c]-=t;}
+    }
+    var d=ut+vt-ov;return d>0?ov/d:0;
+  }
+  var S=[];
+  for(var i=0;i<N;i++){S.push([]);for(var j=0;j<M;j++)S[i].push(sim(yuanCleans[i],yiCleans[j]));}
+  var NEG=-1e9;
+  var dp=[],back=[];
+  for(var i=0;i<=N;i++){
+    dp.push(new Float64Array(M+1).fill(NEG));
+    back.push(new Int32Array(M+1).fill(0));
+  }
+  dp[0][0]=0;
+  for(var i=1;i<=N;i++){
+    var pm=dp[i-1][0],pk=0;
+    for(var j=1;j<=M;j++){
+      if(dp[i-1][j]>pm){pm=dp[i-1][j];pk=j;}
+      if(pm>NEG){var score=S[i-1][j-1]+pm;if(score>dp[i][j]){dp[i][j]=score;back[i][j]=pk;}}
+    }
+  }
+  var bestJ=1,bestScore=NEG;
+  for(var j=1;j<=M;j++){if(dp[N][j]>bestScore){bestScore=dp[N][j];bestJ=j;}}
+  var mapping=new Array(N);
+  var j=bestJ;
+  for(var i=N;i>=1;i--){mapping[i-1]=j-1;j=back[i][j];}
   return mapping;
 }
 
